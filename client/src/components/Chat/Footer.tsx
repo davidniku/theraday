@@ -34,6 +34,8 @@ export default function Footer({ className }: { className?: string }) {
     </a>
   );
 
+  const mainContentParts: string[] = [];
+
   useEffect(() => {
     if (config?.analyticsGtmId != null && typeof window.google_tag_manager === 'undefined') {
       const tagManagerArgs = {

@@ -244,6 +244,49 @@ export function createAgentCategoryMethods(mongoose: typeof import('mongoose')) 
       await AgentCategory.bulkWrite(bulkOps, { ordered: false });
     }
 
+    // Deactivate legacy categories that are not in the current defaults (non-custom only)
+    const defaultValues = new Set(defaultCategories.map((c) => c.value));
+    await AgentCategory.updateMany(
+      {
+        custom: { $ne: true },
+        value: { $nin: Array.from(defaultValues) },
+        isActive: true,
+      },
+      { $set: { isActive: false } },
+    );
+
+    // Ensure single active document per value by deactivating duplicates (prefer one with localized label)
+    const allCategories = await AgentCategory.find({}).lean();
+    const byValue = new Map<string, IAgentCategory[]>();
+    for (const cat of allCategories as IAgentCategory[]) {
+      const arr = byValue.get(cat.value) || [];
+      arr.push(cat);
+      byValue.set(cat.value, arr);
+    }
+
+    const idsToDeactivate: Types.ObjectId[] = [] as unknown as Types.ObjectId[];
+    for (const [, cats] of byValue) {
+      if (cats.length <= 1) continue;
+      // Keep exactly one active: prefer label starting with 'com_' (localized), else first
+      const preferred =
+        cats.find((c) => (c.label as string | undefined)?.startsWith?.('com_')) || cats[0];
+      for (const c of cats) {
+        if ((c as any)._id?.toString?.() !== (preferred as any)._id?.toString?.()) {
+          // Only mark non-custom active ones; leave custom as-is
+          if ((c as any).isActive && !(c as any).custom) {
+            idsToDeactivate.push((c as any)._id as unknown as Types.ObjectId);
+          }
+        }
+      }
+    }
+
+    if (idsToDeactivate.length > 0) {
+      await AgentCategory.updateMany(
+        { _id: { $in: idsToDeactivate } },
+        { $set: { isActive: false } },
+      );
+    }
+
     return updates.length > 0 || created > 0;
   }
 
